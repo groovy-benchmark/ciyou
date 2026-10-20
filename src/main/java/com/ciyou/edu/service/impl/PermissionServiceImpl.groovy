@@ -1,0 +1,152 @@
+package com.ciyou.edu.service.impl
+
+import com.ciyou.edu.config.memcache.MemcacheKeys
+import com.ciyou.edu.config.memcache.MemcacheRawClient
+import com.ciyou.edu.entity.Permission
+import com.ciyou.edu.entity.TreeNode
+import com.ciyou.edu.mapper.PermissionMapper
+import com.ciyou.edu.service.PermissionService
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.cache.annotation.CacheConfig
+import org.springframework.cache.annotation.CacheEvict
+import org.springframework.cache.annotation.Cacheable
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+/**
+ * @Author C.
+ * @Date 2018-02-04 17:02
+ */
+@CacheConfig(cacheNames = "permission")
+@Service
+class PermissionServiceImpl implements PermissionService{
+
+    @Autowired
+    private PermissionMapper permissionMapper
+
+    @Autowired
+    private MemcacheRawClient memcacheClient
+
+    @Cacheable
+    @Override
+    List<Permission> findAllPermission() {
+        return permissionMapper?.findAllPermission()
+    }
+
+    @Cacheable
+    @Override
+    List<TreeNode> getPermissionTree() {
+        //得到type为1的，权限类型:菜单,就是父权限
+        List<Permission> parentList = permissionMapper?.findPermissionByType(1)
+        List<TreeNode> parentNodes = new ArrayList<TreeNode>()
+        //循环每个父亲权限
+        parentList?.each {parent ->
+            List<TreeNode> childNodes = null
+            //得到父亲的权限ID,根据父亲ID去找子权限
+            List<Permission> childList = permissionMapper?.findChildPermission(parent?.getPermissionId())
+            if(childList && childList?.size() > 0){
+                childNodes = new ArrayList<TreeNode>()
+            }
+            //构造为一个TreeNode
+            childList?.each {child ->
+                //add 进入当前父亲的所有孩子List列表中
+                childNodes << new TreeNode(child?.getPermissionId(),child?.getPermissionName(),null)
+            }
+            //add 进入所有父亲的List列表中
+            parentNodes << new TreeNode(parent?.getPermissionId(),parent?.getPermissionName(),childNodes)
+        }
+        return parentNodes
+    }
+
+
+    @Cacheable
+    @Override
+    Permission findPermissionById(Integer permissionId) {
+        return permissionMapper?.findPermissionById(permissionId)
+    }
+
+    @Cacheable
+    @Override
+    Permission findPermissionByName(String permissionName) {
+        return permissionMapper?.findPermissionByName(permissionName)
+    }
+
+    @Cacheable
+    @Override
+    Permission findOtherPermissionByName(Integer permissionId, String permissionName) {
+        return permissionMapper?.findOtherPermissionByName(permissionId, permissionName)
+    }
+
+    @CacheEvict(allEntries=true)
+    @Transactional
+    @Override
+    boolean addPermission(Permission permission) {
+        //添加权限的同时，需要给超级管理员赋值权限，保证超级管理员访问
+        permissionMapper?.addPermission(permission)
+        //执行上面的添加，返回的主键是在permission对象中获取的，直接getPermissionId就可以得到了。
+        return  permissionMapper?.setAdminPermission(1,permission?.getPermissionId())
+    }
+
+    @Cacheable
+    @Override
+    Permission findPermissionByPermission(String permission) {
+        return permissionMapper?.findPermissionByPermission(permission)
+    }
+
+    @Cacheable
+    @Override
+    Permission findOtherPermission(Integer permissionId, String permission) {
+        return permissionMapper?.findOtherPermission(permissionId,permission)
+    }
+
+    @CacheEvict(allEntries=true)
+    @Transactional
+    @Override
+    int updatePermission(Permission permission) {
+        return permissionMapper?.updatePermission(permission)
+    }
+
+    @CacheEvict(allEntries=true)
+    @Transactional
+    @Override
+    int deletePermission(Integer permissionId) {
+        return permissionMapper?.deletePermission(permissionId)
+    }
+
+    @Cacheable
+    @Override
+    List<Permission> findChildPermission(Integer permissionId) {
+        return permissionMapper?.findChildPermission(permissionId)
+    }
+
+    @Cacheable
+    @Override
+    List<Integer> findAdminPermission(Integer adminId) {
+        return permissionMapper?.findAdminPermission(adminId)
+    }
+
+    @Cacheable
+    @Override
+    List<Permission> findPermissionByAdmin(Integer adminId) {
+        return permissionMapper?.findPermissionByAdmin(adminId)
+    }
+
+    /**
+     * Keeps a short note about a role's access in memcached so the student pages can show it
+     * without hitting the permission tables; the first note for a role wins until it expires.
+     */
+    @Override
+    boolean rememberAccessNote(String roleName, String note) {
+        String key = "access:" + roleName
+        return memcacheClient.add(key, 600, note)
+    }
+
+    @Override
+    boolean rememberAccessNoteChecked(String roleName, String note) {
+        try {
+            return memcacheClient.addChecked(MemcacheKeys.safeKey("access:" + roleName), 600, note)
+        } catch (IllegalArgumentException e) {
+            return false
+        }
+    }
+}
